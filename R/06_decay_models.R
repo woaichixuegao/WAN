@@ -10,14 +10,16 @@ exponential_decay <- function(x, N0, b) {
   N0 * exp(-b * x)
 }
 
-#' Fit an exponential decay model
+#' Fit an exponential decay model (keeping zeros)
 #'
 #' @description
 #' Fit an exponential decay model describing frequency as a function of
-#' distance using non-linear least squares (\code{nlsLM}).
+#' distance using non-linear least squares (\code{minpack.lm::nlsLM}).
 #'
 #' The model has the form:
 #' \deqn{frequency = N0 * exp(-b * distance)}
+#'
+#' All non-missing data points are used, including zeros.
 #'
 #' @param distance Numeric vector of distances.
 #' @param frequency Numeric vector of frequencies (percentages, \code{0–100}).
@@ -37,34 +39,43 @@ fit_exponential_decay <- function(distance, frequency) {
     distance  = distance,
     frequency = frequency
   ) %>%
-    dplyr::filter(!is.na(frequency), !is.na(distance))
+    dplyr::filter(is.finite(distance), is.finite(frequency))
 
   if (nrow(valid_data) < 3) {
-    return(list(success = FALSE, message = "Not enough data points to fit the model."))
+    return(list(
+      success = FALSE,
+      message = "Not enough data points to fit the exponential decay model."
+    ))
   }
 
   res <- tryCatch({
     fit <- minpack.lm::nlsLM(
       frequency ~ exponential_decay(distance, N0, b),
-      data = valid_data,
-      start = list(N0 = max(valid_data$frequency), b = 0.01),
+      data    = valid_data,
+      start   = list(
+        N0 = max(valid_data$frequency, na.rm = TRUE),
+        b  = 0.01
+      ),
       control = minpack.lm::nls.lm.control(maxiter = 500)
     )
 
-    y_pred   <- stats::predict(fit)
-    ss_res   <- sum((valid_data$frequency - y_pred)^2)
-    ss_tot   <- sum((valid_data$frequency - mean(valid_data$frequency))^2)
+    y_pred <- stats::predict(fit)
+    ss_res <- sum((valid_data$frequency - y_pred)^2, na.rm = TRUE)
+    ss_tot <- sum((valid_data$frequency - mean(valid_data$frequency, na.rm = TRUE))^2, na.rm = TRUE)
     r_squared <- 1 - (ss_res / ss_tot)
 
     list(
-      params   = stats::coef(fit),
+      params    = stats::coef(fit),
       r_squared = r_squared,
-      fit      = fit,
-      data     = valid_data,
-      success  = TRUE
+      fit       = fit,
+      data      = valid_data,
+      success   = TRUE
     )
   }, error = function(e) {
-    list(success = FALSE, message = paste("Model fitting failed:", e$message))
+    list(
+      success = FALSE,
+      message = paste("Model fitting failed:", e$message)
+    )
   })
 
   res
@@ -80,20 +91,23 @@ fit_exponential_decay <- function(distance, frequency) {
 #'   or \code{NULL} if the fit was not successful.
 #' @export
 calculate_confidence_intervals <- function(fit_result, x_range) {
-  if (!fit_result$success) return(NULL)
+  if (is.null(fit_result) || !isTRUE(fit_result$success)) {
+    return(NULL)
+  }
 
   x_pred <- x_range
   y_pred <- exponential_decay(
     x_pred,
-    fit_result$params["N0"],
-    fit_result$params["b"]
+    N0 = fit_result$params["N0"],
+    b  = fit_result$params["b"]
   )
 
   residuals <- fit_result$data$frequency - stats::predict(fit_result$fit)
-  se        <- stats::sd(residuals)
+  se        <- stats::sd(residuals, na.rm = TRUE)
 
   upper <- y_pred + 1.96 * se
-  lower <- pmax(y_pred - 1.96 * se, 0)
+  lower <- y_pred - 1.96 * se
+  lower <- pmax(lower, 0)  # frequencies cannot be negative
 
   data.frame(
     distance = x_pred,
@@ -112,10 +126,15 @@ calculate_confidence_intervals <- function(fit_result, x_range) {
 #'   or \code{NULL} if there are fewer than 3 valid points.
 #' @export
 fit_linear_model <- function(distance, frequency) {
-  df <- data.frame(distance = distance, frequency = frequency) %>%
-    dplyr::filter(!is.na(distance), !is.na(frequency))
+  df <- data.frame(
+    distance  = distance,
+    frequency = frequency
+  ) %>%
+    dplyr::filter(is.finite(distance), is.finite(frequency))
 
-  if (nrow(df) < 3) return(NULL)
+  if (nrow(df) < 3) {
+    return(NULL)
+  }
 
   fit <- stats::lm(frequency ~ distance, data = df)
 
@@ -137,13 +156,20 @@ fit_linear_model <- function(distance, frequency) {
 #'   positive points are available.
 #' @export
 fit_power_model <- function(distance, frequency) {
-  df <- data.frame(distance = distance, frequency = frequency) %>%
-    dplyr::filter(!is.na(distance), !is.na(frequency),
-                  distance > 0, frequency > 0)
+  df <- data.frame(
+    distance  = distance,
+    frequency = frequency
+  ) %>%
+    dplyr::filter(
+      is.finite(distance), is.finite(frequency),
+      distance > 0, frequency > 0
+    )
 
-  if (nrow(df) < 3) return(NULL)
+  if (nrow(df) < 3) {
+    return(NULL)
+  }
 
-  fit <- stats::lm(log(frequency) ~ log(distance), data = df)
+  fit   <- stats::lm(log(frequency) ~ log(distance), data = df)
   a_hat <- exp(stats::coef(fit)[1])
   b_hat <- -stats::coef(fit)[2]
 
@@ -166,10 +192,15 @@ fit_power_model <- function(distance, frequency) {
 #'   or there are fewer than 3 valid points.
 #' @export
 fit_gaussian_model <- function(distance, frequency) {
-  df <- data.frame(distance = distance, frequency = frequency) %>%
-    dplyr::filter(!is.na(distance), !is.na(frequency))
+  df <- data.frame(
+    distance  = distance,
+    frequency = frequency
+  ) %>%
+    dplyr::filter(is.finite(distance), is.finite(frequency))
 
-  if (nrow(df) < 3) return(NULL)
+  if (nrow(df) < 3) {
+    return(NULL)
+  }
 
   res <- tryCatch({
     fit <- minpack.lm::nlsLM(
@@ -177,7 +208,7 @@ fit_gaussian_model <- function(distance, frequency) {
       data = df,
       start = list(
         a = max(df$frequency, na.rm = TRUE),
-        b = diff(range(df$distance)) / 3
+        b = diff(range(df$distance, na.rm = TRUE)) / 3
       ),
       control = minpack.lm::nls.lm.control(maxiter = 500)
     )
@@ -218,7 +249,7 @@ compare_models_AIC <- function(distance, frequency) {
 
   # Exponential decay model
   exp_fit <- fit_exponential_decay(distance, frequency)
-  if (exp_fit$success) {
+  if (isTRUE(exp_fit$success)) {
     res[["exponential"]] <- list(
       model = "exponential",
       fit   = exp_fit$fit,
@@ -229,22 +260,29 @@ compare_models_AIC <- function(distance, frequency) {
 
   # Linear model
   lin <- fit_linear_model(distance, frequency)
-  if (!is.null(lin)) res[["linear"]] <- lin
+  if (!is.null(lin)) {
+    res[["linear"]] <- lin
+  }
 
   # Power-law model
   pow <- fit_power_model(distance, frequency)
-  if (!is.null(pow)) res[["power"]] <- pow
+  if (!is.null(pow)) {
+    res[["power"]] <- pow
+  }
 
   # Gaussian model
   gau <- fit_gaussian_model(distance, frequency)
-  if (!is.null(gau)) res[["gaussian"]] <- gau
+  if (!is.null(gau)) {
+    res[["gaussian"]] <- gau
+  }
 
-  if (length(res) == 0) return(NULL)
+  if (length(res) == 0) {
+    return(NULL)
+  }
 
-  # Construct AIC comparison table
   aic_df <- data.frame(
-    model = sapply(res, function(x) x$model),
-    AIC   = sapply(res, function(x) x$AIC)
+    model = vapply(res, function(x) x$model, character(1L)),
+    AIC   = vapply(res, function(x) x$AIC,   numeric(1L))
   ) %>%
     dplyr::arrange(.data$AIC)
 
