@@ -77,12 +77,9 @@ The package integrates **sf**, **terra**, **ggplot2**, **mgcv**, and **randomFor
 
 ```r
 install.packages("remotes")
-remotes::install_github("YOUR_USERNAME/WAN")
+remotes::install_github("woaichixuegao/WAN")
 library(WAN)
 ```
-
-Replace `YOUR_USERNAME` with your GitHub username.
-
 ---
 
 ## Basic Example
