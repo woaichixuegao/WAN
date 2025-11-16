@@ -78,7 +78,7 @@ plot_single_habitat_decay <- function(df_habitat,
       values = c("Sampling" = "#1f77b4", "Occurrence" = "#ff7f0e")
     ) +
     ggplot2::labs(
-      x = "Distance (km)",
+      x = "Distance",
       y = "Frequency (%)",
       color = "",
       title = habitat_name
