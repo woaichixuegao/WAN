@@ -26,3 +26,5 @@ Imports:
     terra,
     tidyr
 VignetteBuilder: knitr
+URL: https://github.com/woaichixuegao/WAN
+BugReports: https://github.com/woaichixuegao/WAN/issues
